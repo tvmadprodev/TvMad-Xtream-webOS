@@ -1,0 +1,103 @@
+name: Build TvMad-Xtream webOS Beta IPK
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install webOS CLI
+        run: npm install -g @webos-tools/cli
+
+      - name: Find and unpack project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$(find . -maxdepth 1 -type f \( -iname '*webos*.zip' -o -iname '*.zip' \) -print -quit)"
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+          echo "Using ZIP: $ZIP"
+          rm -rf build-src dist
+          mkdir -p build-src dist
+          unzip -q "$ZIP" -d build-src
+
+          # Accept both layouts:
+          # ZIP/app/... or ZIP/some-folder/app/...
+          if [ ! -f build-src/app/appinfo.json ]; then
+            APPINFO="$(find build-src -type f -path '*/app/appinfo.json' -print -quit)"
+            if [ -n "$APPINFO" ]; then
+              ROOT="$(dirname "$(dirname "$APPINFO")")"
+              echo "Detected nested project root: $ROOT"
+              shopt -s dotglob
+              TMP="$(mktemp -d)"
+              cp -a "$ROOT"/. "$TMP"/
+              rm -rf build-src
+              mkdir build-src
+              cp -a "$TMP"/. build-src/
+              rm -rf "$TMP"
+            fi
+          fi
+
+          echo "Project tree:"
+          find build-src -maxdepth 6 -type f -print | sort
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build-src/app/appinfo.json
+          test -f build-src/app/index.html
+
+          SERVICE="$(find build-src -type f -name service.js -path '*service*' -print -quit)"
+          SERVICES_JSON="$(find build-src -type f -name services.json -path '*service*' -print -quit)"
+          test -n "$SERVICE"
+          test -n "$SERVICES_JSON"
+
+          echo "APP: build-src/app"
+          echo "SERVICE JS: $SERVICE"
+          echo "SERVICES JSON: $SERVICES_JSON"
+
+          dirname "$SERVICE" > /tmp/service_dir
+
+      - name: Install service dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_DIR="$(cat /tmp/service_dir)"
+          if [ -f "$SERVICE_DIR/package.json" ]; then
+            cd "$SERVICE_DIR"
+            npm install --omit=dev --ignore-scripts
+          fi
+
+      - name: Build IPK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_DIR="$(cat /tmp/service_dir)"
+          ares-package build-src/app "$SERVICE_DIR" -o dist
+          echo "Built:"
+          ls -lah dist
+          test -n "$(find dist -maxdepth 1 -type f -name '*.ipk' -print -quit)"
+
+      - name: Upload IPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TvMad-Xtream_webOS_Beta_0.1_IPK
+          path: dist/*.ipk
+          if-no-files-found: error
