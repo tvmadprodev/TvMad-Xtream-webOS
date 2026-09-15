@@ -1,0 +1,100 @@
+name: Build TvMad-Xtream webOS Beta IPK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-webos:
+    name: Build webOS IPK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+
+      - name: 3. Install LG webOS CLI
+        run: |
+          npm install -g @webos-tools/cli
+          ares -V
+          ares-package --version
+
+      - name: 4. Find project ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ZIP="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname 'TvMad-Xtream_webOS_Beta_0.1_PROJECT*.zip' -print -quit)"
+          test -n "$ZIP"
+          echo "PROJECT_ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "Using: $ZIP"
+          ls -lh "$ZIP"
+
+      - name: 5. Unpack project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "$GITHUB_WORKSPACE/build-src" "$GITHUB_WORKSPACE/dist"
+          mkdir -p "$GITHUB_WORKSPACE/build-src" "$GITHUB_WORKSPACE/dist"
+          unzip -q "$PROJECT_ZIP" -d "$GITHUB_WORKSPACE/build-src"
+          echo "===== PROJECT FILES ====="
+          find "$GITHUB_WORKSPACE/build-src" -maxdepth 6 -type f -print | sort
+
+      - name: 6. Validate webOS app and service
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP="$GITHUB_WORKSPACE/build-src/app"
+          SERVICE="$GITHUB_WORKSPACE/build-src/services/pl.tvmad.app.xtream.service"
+
+          test -f "$APP/appinfo.json"
+          test -f "$APP/index.html"
+          test -f "$APP/icon.png"
+          test -f "$SERVICE/package.json"
+          test -f "$SERVICE/services.json"
+          test -f "$SERVICE/service.js"
+
+          node -e "const a=require(process.env.GITHUB_WORKSPACE+'/build-src/app/appinfo.json'); if(a.id!=='pl.tvmad.app.xtream') throw new Error('Wrong app id: '+a.id)"
+          node -e "const s=require(process.env.GITHUB_WORKSPACE+'/build-src/services/pl.tvmad.app.xtream.service/services.json'); if(s.id!=='pl.tvmad.app.xtream.service') throw new Error('Wrong service id: '+s.id)"
+
+          echo "Validation OK"
+
+      - name: 7. Build application + WebInfo service
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP="$GITHUB_WORKSPACE/build-src/app"
+          SERVICE="$GITHUB_WORKSPACE/build-src/services/pl.tvmad.app.xtream.service"
+
+          ares-package -v "$APP" "$SERVICE" -o "$GITHUB_WORKSPACE/dist"
+
+          echo "===== BUILT IPK ====="
+          ls -lah "$GITHUB_WORKSPACE/dist"
+          IPK="$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -type f -name '*.ipk' -print -quit)"
+          test -n "$IPK"
+          test -s "$IPK"
+          echo "IPK_FILE=$IPK" >> "$GITHUB_ENV"
+
+      - name: 8. Verify built IPK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ares-package -I "$IPK_FILE"
+          ls -lh "$IPK_FILE"
+
+      - name: 9. Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TvMad-Xtream_webOS_Beta_0.1_IPK
+          path: dist/*.ipk
+          if-no-files-found: error
+          retention-days: 14
