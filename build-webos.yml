@@ -1,0 +1,61 @@
+name: Build TvMad-Xtream webOS Beta IPK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'TvMad-Xtream_webOS_Beta_0.1_PROJECT.zip'
+      - '.github/workflows/build-webos.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-webos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install webOS CLI
+        run: npm install -g @webos-tools/cli
+
+      - name: Unpack TvMad-Xtream project
+        run: |
+          rm -rf build-src
+          mkdir build-src
+          unzip -q TvMad-Xtream_webOS_Beta_0.1_PROJECT.zip -d build-src
+          echo "Project contents:"
+          find build-src -maxdepth 3 -type f | sort
+
+      - name: Validate project
+        run: |
+          test -f build-src/app/appinfo.json
+          test -f build-src/app/index.html
+          test -f build-src/service/services.json
+          test -f build-src/service/service.js
+
+      - name: Install WebInfo service dependencies
+        working-directory: build-src/service
+        run: npm install --omit=dev
+
+      - name: Build webOS IPK
+        run: |
+          mkdir -p dist
+          ares-package build-src/app build-src/service -o dist
+          echo "Built packages:"
+          ls -lah dist
+          test -n "$(find dist -maxdepth 1 -name '*.ipk' -print -quit)"
+
+      - name: Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TvMad-Xtream_webOS_Beta_0.1_IPK
+          path: dist/*.ipk
+          if-no-files-found: error
